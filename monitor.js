@@ -99,8 +99,53 @@ async function fetchPrices(url) {
   }
 }
 
+// Lowest prices are shared through a pinned message in the Telegram chat, so the local monitor
+// and the cloud routine (which has no persistent disk) never alert twice for the same drop.
+const PIN_HEADER = '📌 Mínimos COR-FTE (no borrar este mensaje)';
+
+async function tg(method, body) {
+  const { token } = telegramConfig();
+  const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json();
+  if (!json.ok) throw new Error(`Telegram ${method}: ${json.description}`);
+  return json.result;
+}
+
+async function loadPinnedMinimos() {
+  const { chatId } = telegramConfig();
+  const chat = await tg('getChat', { chat_id: chatId });
+  const pinned = chat.pinned_message;
+  if (!pinned || !pinned.text || !pinned.text.startsWith(PIN_HEADER)) return null;
+  return { messageId: pinned.message_id, minimos: JSON.parse(pinned.text.slice(PIN_HEADER.length).trim()) };
+}
+
+async function savePinnedMinimos(minimos, messageId) {
+  const { chatId } = telegramConfig();
+  const text = `${PIN_HEADER}\n${JSON.stringify(minimos)}`;
+  if (messageId) {
+    await tg('editMessageText', { chat_id: chatId, message_id: messageId, text });
+    return;
+  }
+  const msg = await tg('sendMessage', { chat_id: chatId, text, disable_notification: true });
+  await tg('pinChatMessage', { chat_id: chatId, message_id: msg.message_id, disable_notification: true });
+}
+
 async function check() {
   const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+  let pinned = null;
+  if (telegramConfig()) {
+    try {
+      pinned = await loadPinnedMinimos();
+      if (pinned) state.minimos = pinned.minimos;
+    } catch (err) {
+      log(`Error leyendo mínimos de Telegram: ${err.message}`);
+    }
+  }
+  const before = JSON.stringify(state.minimos);
   let prices;
   try {
     prices = await fetchPrices(state.url);
@@ -133,6 +178,13 @@ async function check() {
 
   state.historial.push({ hora: new Date().toLocaleString('es-AR'), precios: snapshot });
   fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+  if (telegramConfig() && (!pinned || JSON.stringify(state.minimos) !== before)) {
+    try {
+      await savePinnedMinimos(state.minimos, pinned?.messageId);
+    } catch (err) {
+      log(`Error guardando mínimos en Telegram: ${err.message}`);
+    }
+  }
 
   const summary = DAYS.map((d) => `${d}/12 ${prices[d] ? fmt(prices[d]) : '-'}`).join(' | ');
   log(summary + (drops.length ? `  >>> BAJÓ: ${drops.join('; ')}` : ''));
