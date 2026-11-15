@@ -176,8 +176,11 @@ async function check() {
     }
   }
 
-  state.historial.push({ hora: new Date().toLocaleString('es-AR'), precios: snapshot });
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+  // --no-save keeps the cloud checkout clean; there the pinned Telegram message is the only state.
+  if (!process.argv.includes('--no-save')) {
+    state.historial.push({ hora: new Date().toLocaleString('es-AR'), precios: snapshot });
+    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+  }
   if (telegramConfig() && (!pinned || JSON.stringify(state.minimos) !== before)) {
     try {
       await savePinnedMinimos(state.minimos, pinned?.messageId);
