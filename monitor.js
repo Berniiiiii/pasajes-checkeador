@@ -187,7 +187,8 @@ async function check() {
   }
 
   const summary = DAYS.map((d) => `${d}/12 ${prices[d] ? fmt(prices[d]) : '-'}`).join(' | ');
-  log(summary + (drops.length ? `  >>> BAJÓ: ${drops.join('; ')}` : ''));
+  const source = pinned ? 'telegram' : telegramConfig() ? 'archivo (telegram falló)' : 'archivo (sin telegram)';
+  log(`${summary} [mínimos: ${source}]` + (drops.length ? `  >>> BAJÓ: ${drops.join('; ')}` : ''));
   if (drops.length) notify('BAJÓ precio COR-FTE', drops.join(' · '));
 }
 
