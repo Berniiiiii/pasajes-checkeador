@@ -1,6 +1,7 @@
-// Monitors Aerolineas Argentinas flex-dates calendar for COR-FTE price drops (Dec 1-5, 2026).
-// Loads the public page in headless Chrome every 5 minutes, reads rendered prices,
-// and shows a Windows notification when any day gets cheaper than its lowest seen price.
+// Monitors the Aerolineas Argentinas flex-dates calendar for COR-FTE price drops.
+// The watched month and days come from precios.json ("mes", "dias").
+// Loads the public page in headless Chrome every 5 minutes, reads rendered prices, and notifies
+// when a day gets cheaper than its lowest seen price or a sold-out day gets seats again.
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
@@ -13,11 +14,10 @@ const CHROME =
 const STATE_FILE = path.join(__dirname, 'precios.json');
 const LOG_FILE = path.join(__dirname, 'monitor.log');
 const INTERVAL_MS = 5 * 60 * 1000;
-const DAYS = [1, 2, 3, 4, 5];
 const TELEGRAM_FILE = path.join(__dirname, 'telegram.json');
 
 function log(msg) {
-  const line = `[${new Date().toLocaleString('es-AR')}] ${msg}`;
+  const line = `[${new Date().toLocaleString('es-AR', { hour12: false })}] ${msg}`;
   console.log(line);
   fs.appendFileSync(LOG_FILE, line + '\n');
 }
@@ -155,30 +155,41 @@ async function check() {
     return;
   }
 
-  const found = DAYS.filter((d) => prices[d]);
+  const days = state.dias;
+  const month = Number(state.mes.split('-')[1]);
+  const keyOf = (d) => `${state.mes}-${String(d).padStart(2, '0')}`;
+  const label = (d) => `${d}/${month}`;
+
+  const found = days.filter((d) => prices[d]);
   if (found.length === 0) {
-    log('No se encontraron precios para 1-5 dic (sin disponibilidad o la página cambió).');
+    log(`No se encontraron precios para ${label(days[0])}-${label(days.at(-1))} (sin disponibilidad o la página cambió).`);
     process.exitCode = 1;
     return;
   }
 
+  // Keep only the watched days; when none of them has a stored minimum yet this is the
+  // baseline run, so record prices without alerting.
+  state.minimos = Object.fromEntries(days.filter((d) => keyOf(d) in state.minimos).map((d) => [keyOf(d), state.minimos[keyOf(d)]]));
+  const baseline = Object.keys(state.minimos).length === 0;
+
   const drops = [];
   const snapshot = {};
-  for (const d of DAYS) {
-    const key = `2026-12-${String(d).padStart(2, '0')}`;
+  for (const d of days) {
     const price = prices[d];
     snapshot[String(d).padStart(2, '0')] = price ?? null;
     if (!price) continue;
-    const min = state.minimos[key];
+    const min = state.minimos[keyOf(d)];
     if (min === undefined || price < min) {
-      if (min !== undefined) drops.push(`${d}/12: ARS ${fmt(price)} (antes ${fmt(min)})`);
-      state.minimos[key] = price;
+      if (!baseline) {
+        drops.push(min === undefined ? `${label(d)}: hay lugar, ARS ${fmt(price)}` : `${label(d)}: ARS ${fmt(price)} (antes ${fmt(min)})`);
+      }
+      state.minimos[keyOf(d)] = price;
     }
   }
 
   // --no-save keeps the cloud checkout clean; there the pinned Telegram message is the only state.
   if (!process.argv.includes('--no-save')) {
-    state.historial.push({ hora: new Date().toLocaleString('es-AR'), precios: snapshot });
+    state.historial.push({ hora: new Date().toLocaleString('es-AR', { hour12: false }), precios: snapshot });
     fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
   }
   if (telegramConfig() && (!pinned || JSON.stringify(state.minimos) !== before)) {
@@ -189,7 +200,7 @@ async function check() {
     }
   }
 
-  const summary = DAYS.map((d) => `${d}/12 ${prices[d] ? fmt(prices[d]) : '-'}`).join(' | ');
+  const summary = days.map((d) => `${label(d)} ${prices[d] ? fmt(prices[d]) : '-'}`).join(' | ');
   const source = pinned ? 'telegram' : telegramConfig() ? 'archivo (telegram falló)' : 'archivo (sin telegram)';
   log(`${summary} [mínimos: ${source}]` + (drops.length ? `  >>> BAJÓ: ${drops.join('; ')}` : ''));
   if (drops.length) notify('BAJÓ precio COR-FTE', drops.join(' · '));
