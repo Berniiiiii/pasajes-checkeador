@@ -1,4 +1,4 @@
-// Monitors Aerolineas Argentinas flex-dates calendar for COR-FTE price drops (Dec 1-5, 2026).
+// Monitors Aerolineas Argentinas flex-dates calendar for COR-FTE price drops (Dec 17-31, 2026).
 // Loads the public page in headless Chrome every 5 minutes, reads rendered prices,
 // and shows a Windows notification when any day gets cheaper than its lowest seen price.
 const fs = require('fs');
@@ -13,7 +13,7 @@ const CHROME =
 const STATE_FILE = path.join(__dirname, 'precios.json');
 const LOG_FILE = path.join(__dirname, 'monitor.log');
 const INTERVAL_MS = 5 * 60 * 1000;
-const DAYS = [1, 2, 3, 4, 5];
+const DAYS = Array.from({ length: 15 }, (_, i) => i + 17); // 17 to 31 de diciembre
 const TELEGRAM_FILE = path.join(__dirname, 'telegram.json');
 
 function log(msg) {
@@ -157,7 +157,7 @@ async function check() {
 
   const found = DAYS.filter((d) => prices[d]);
   if (found.length === 0) {
-    log('No se encontraron precios para 1-5 dic (sin disponibilidad o la página cambió).');
+    log('No se encontraron precios para 17-31 dic (sin disponibilidad o la página cambió).');
     process.exitCode = 1;
     return;
   }
